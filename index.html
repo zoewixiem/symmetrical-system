@@ -2,173 +2,520 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Crypto Bot Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EMA/RSI Demo Bot</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg:       #080c10;
+            --panel:    #0d1117;
+            --border:   #1c2a3a;
+            --accent:   #00e5ff;
+            --green:    #00ff88;
+            --red:      #ff3b6b;
+            --amber:    #ffb800;
+            --muted:    #4a6080;
+            --text:     #c8d8e8;
+            --font-mono: 'JetBrains Mono', monospace;
+            --font-ui:   'Syne', sans-serif;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font-mono);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Scanline overlay */
+        body::before {
+            content: '';
+            position: fixed; inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0,229,255,0.015) 2px,
+                rgba(0,229,255,0.015) 4px
+            );
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+        /* ── HEADER ── */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 20px;
+            margin-bottom: 28px;
+        }
+        .logo {
+            font-family: var(--font-ui);
+            font-weight: 800;
+            font-size: 1.4rem;
+            letter-spacing: -0.02em;
+            color: var(--accent);
+        }
+        .logo span { color: var(--muted); font-weight: 400; font-size: 0.85rem; margin-left: 10px; }
+        .badge {
+            font-size: 0.7rem;
+            padding: 4px 12px;
+            border-radius: 2px;
+            border: 1px solid;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            transition: all 0.3s;
+        }
+        .badge.online  { color: var(--green);  border-color: var(--green);  background: rgba(0,255,136,0.07); }
+        .badge.offline { color: var(--red);    border-color: var(--red);    background: rgba(255,59,107,0.07); }
+        .badge.waiting { color: var(--muted);  border-color: var(--muted);  background: transparent; }
+
+        /* ── STAT CARDS ── */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            padding: 16px 18px;
+            position: relative;
+            overflow: hidden;
+        }
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: var(--accent);
+            opacity: 0.4;
+        }
+        .stat-card.green::before { background: var(--green); }
+        .stat-card.red::before   { background: var(--red); }
+        .stat-card.amber::before { background: var(--amber); }
+
+        .stat-label {
+            font-size: 0.6rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            margin-bottom: 8px;
+        }
+        .stat-value {
+            font-family: var(--font-ui);
+            font-size: 1.5rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+        .stat-sub { font-size: 0.65rem; color: var(--muted); margin-top: 5px; }
+
+        /* ── MAIN GRID ── */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 340px;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        /* ── PANELS ── */
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            padding: 20px;
+        }
+        .panel-title {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            color: var(--muted);
+            margin-bottom: 16px;
+        }
+
+        /* ── CHART ── */
+        .chart-wrap {
+            position: relative;
+            height: 260px;
+        }
+
+        /* ── INDICATORS ── */
+        .indicators {
+            display: flex;
+            gap: 12px;
+            margin-top: 14px;
+            flex-wrap: wrap;
+        }
+        .ind-chip {
+            font-size: 0.7rem;
+            padding: 4px 10px;
+            border: 1px solid var(--border);
+            color: var(--muted);
+        }
+        .ind-chip b { color: var(--text); }
+
+        /* ── POSITION BOX ── */
+        .pos-box {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            padding: 14px;
+            font-size: 0.72rem;
+            line-height: 1.8;
+            min-height: 120px;
+            position: relative;
+        }
+        .pos-row { display: flex; justify-content: space-between; }
+        .pos-row .val-long  { color: var(--accent); font-weight: 600; }
+        .pos-row .val-short { color: var(--amber); font-weight: 600; }
+        .pos-row .val-green { color: var(--green); }
+        .pos-row .val-red   { color: var(--red); }
+
+        .no-pos {
+            position: absolute; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            color: var(--muted); font-size: 0.7rem; letter-spacing: 0.08em;
+        }
+
+        /* ── STATUS LOG ── */
+        .status-log {
+            margin-top: 16px;
+            border-top: 1px solid var(--border);
+            padding-top: 12px;
+            font-size: 0.67rem;
+            color: var(--muted);
+        }
+        .status-log .log-line {
+            color: var(--accent);
+            margin-top: 4px;
+            word-break: break-word;
+        }
+
+        /* ── WIN/LOSS BAR ── */
+        .winbar-wrap { margin-top: 14px; }
+        .winbar-label { display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--muted); margin-bottom: 5px; }
+        .winbar {
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .winbar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--green), var(--accent));
+            transition: width 0.5s ease;
+        }
+
+        /* ── HISTORY TABLE ── */
+        .history-panel { margin-top: 0; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.68rem; }
+        thead tr { background: var(--bg); }
+        th {
+            text-align: left;
+            padding: 8px 10px;
+            color: var(--muted);
+            font-size: 0.6rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            border-bottom: 1px solid var(--border);
+        }
+        td { padding: 8px 10px; border-bottom: 1px solid rgba(28,42,58,0.5); }
+        tr:hover td { background: rgba(0,229,255,0.03); }
+        .pill {
+            display: inline-block;
+            padding: 2px 8px;
+            font-size: 0.6rem;
+            letter-spacing: 0.06em;
+            border: 1px solid;
+        }
+        .pill.tp  { color: var(--green); border-color: var(--green); background: rgba(0,255,136,0.07); }
+        .pill.sl  { color: var(--red);   border-color: var(--red);   background: rgba(255,59,107,0.07); }
+        .side-long  { color: var(--accent); font-weight: 600; }
+        .side-short { color: var(--amber);  font-weight: 600; }
+        .pnl-pos { color: var(--green); }
+        .pnl-neg { color: var(--red); }
+
+        /* ── EMPTY STATES ── */
+        .empty-row td { text-align: center; color: var(--muted); padding: 20px; }
+
+        /* ── BLINK ANIMATION ── */
+        @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .blink { animation: blink 1.4s ease-in-out infinite; }
+
+        @media (max-width: 1100px) {
+            .stats-grid { grid-template-columns: repeat(3, 1fr); }
+            .main-grid  { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 600px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
 </head>
-<body class="bg-slate-900 text-slate-100 p-6">
-    <div class="max-w-6xl mx-auto">
-        <header class="flex justify-between items-center mb-8 border-b border-slate-800 pb-4">
-            <div>
-                <h1 class="text-2xl font-bold text-indigo-400">📊 CryptoBot Dashboard</h1>
-                <p class="text-sm text-slate-400">Память и аналитика в реальном времени</p>
-            </div>
-            <div class="bg-slate-800 px-4 py-2 rounded-lg text-sm font-medium" id="status">Подключение...</div>
-        </header>
+<body>
+<div class="container">
 
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700"><div class="text-xs text-slate-400">Цена BTC</div><div class="text-xl font-bold text-amber-400" id="btc-price">$0.00</div></div>
-            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700"><div class="text-xs text-slate-400">Баланс</div><div class="text-xl font-bold text-indigo-300" id="balance">$17.00</div></div>
-            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700"><div class="text-xs text-slate-400">Чистый PnL</div><div class="text-xl font-bold" id="pnl">$0.00</div></div>
-            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700"><div class="text-xs text-slate-400">Всего сделок</div><div class="text-xl font-bold text-emerald-400" id="trades">0</div></div>
+    <!-- HEADER -->
+    <header>
+        <div>
+            <div class="logo">⬡ EMA/RSI BOT <span>DEMO · BYBIT TESTNET</span></div>
+        </div>
+        <div class="badge waiting" id="conn-badge">● CONNECTING</div>
+    </header>
+
+    <!-- STATS -->
+    <div class="stats-grid">
+        <div class="stat-card amber">
+            <div class="stat-label">Цена BTC</div>
+            <div class="stat-value" id="s-price" style="color:var(--amber)">—</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Баланс</div>
+            <div class="stat-value" id="s-balance" style="color:var(--accent)">—</div>
+        </div>
+        <div class="stat-card" id="pnl-card">
+            <div class="stat-label">Чистый PnL (с комиссиями)</div>
+            <div class="stat-value" id="s-pnl">—</div>
+        </div>
+        <div class="stat-card green">
+            <div class="stat-label">Сделок / Вин-рейт</div>
+            <div class="stat-value" id="s-trades" style="color:var(--green)">—</div>
+            <div class="stat-sub" id="s-winrate">W:0 / L:0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">RSI(14)</div>
+            <div class="stat-value" id="s-rsi">—</div>
+            <div class="stat-sub" id="s-rsi-hint">нейтральный</div>
+        </div>
+    </div>
+
+    <!-- MAIN GRID -->
+    <div class="main-grid">
+
+        <!-- CHART -->
+        <div class="panel">
+            <div class="panel-title">📈 График цены BTC/USDT (реальное время)</div>
+            <div class="chart-wrap">
+                <canvas id="chart"></canvas>
+            </div>
+            <div class="indicators">
+                <div class="ind-chip">EMA9 <b id="i-ema9">—</b></div>
+                <div class="ind-chip">EMA21 <b id="i-ema21">—</b></div>
+                <div class="ind-chip">Тренд <b id="i-trend">—</b></div>
+            </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            <div class="lg:col-span-2 bg-slate-800 p-5 rounded-xl border border-slate-700 h-72 flex flex-col">
-                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">📈 Живой график цены BTC (Каждую секунду)</h3>
-                <div class="relative flex-grow min-h-0">
-                    <canvas id="priceChart"></canvas>
-                </div>
-            </div>
-            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 flex flex-col justify-between">
-                <div>
-                    <h3 class="text-sm font-bold text-slate-300 mb-2">🛡 Состояние матрицы</h3>
-                    <div id="position-box" class="bg-slate-900 p-4 rounded-lg text-xs font-mono text-slate-300 leading-relaxed">Нет активных позиций</div>
-                </div>
-                <div class="text-xs text-slate-400 mt-4 border-t border-slate-700/50 pt-2">
-                    Лог системы: <br><span id="bot-status" class="font-mono text-indigo-300">Ожидание тика...</span>
-                </div>
-            </div>
-        </div>
+        <!-- SIDE PANEL -->
+        <div style="display:flex;flex-direction:column;gap:16px;">
 
-        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
-            <h3 class="text-sm font-bold text-slate-300 mb-3">⏳ Последние 5 сделок</h3>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left text-xs">
-                    <thead class="bg-slate-900 text-slate-400 uppercase text-2xs"><th class="p-2">Время</th><th class="p-2">Вход</th><th class="p-2">Выход</th><th class="p-2">PnL</th><th class="p-2">Результат</th></thead>
-                    <tbody id="history-table"></tbody>
-                </table>
+            <!-- POSITION -->
+            <div class="panel">
+                <div class="panel-title">🎯 Активная позиция</div>
+                <div class="pos-box" id="pos-box">
+                    <div class="no-pos" id="no-pos">НЕТ ПОЗИЦИИ · ЖДЁМ СИГНАЛ</div>
+                    <div id="pos-content" style="display:none"></div>
+                </div>
+                <div class="winbar-wrap">
+                    <div class="winbar-label">
+                        <span id="wins-label">Выигрыши: 0</span>
+                        <span id="losses-label">Проигрыши: 0</span>
+                    </div>
+                    <div class="winbar"><div class="winbar-fill" id="winbar-fill" style="width:0%"></div></div>
+                </div>
+            </div>
+
+            <!-- STATUS -->
+            <div class="panel" style="flex:1">
+                <div class="panel-title">🖥 Лог системы</div>
+                <div class="status-log">
+                    Стратегия: EMA(9) / EMA(21) + RSI(14)<br>
+                    TP: +0.25% | SL: -0.12% | Плечо: 10x<br>
+                    Комиссия: 0.055% тейкер × 2<br>
+                    <div class="log-line blink" id="status-log">Подключение к Bybit Testnet...</div>
+                </div>
             </div>
         </div>
     </div>
 
-    <script>
-        const ctx = document.getElementById('priceChart').getContext('2d');
+    <!-- HISTORY -->
+    <div class="panel history-panel">
+        <div class="panel-title">⏳ История сделок (последние 8)</div>
+        <div style="overflow-x:auto">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Открытие</th>
+                        <th>Закрытие</th>
+                        <th>Тип</th>
+                        <th>Вход</th>
+                        <th>Выход</th>
+                        <th>Gross PnL</th>
+                        <th>Комиссии</th>
+                        <th>NET PnL</th>
+                        <th>Результат</th>
+                    </tr>
+                </thead>
+                <tbody id="history-body">
+                    <tr class="empty-row"><td colspan="9">Ждём первую сделку по сигналу EMA...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
 
-        // Настраиваем адаптивный и плавный график
-        const priceChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: [], // Тут будут реальные секунды времени
-                datasets: [{
-                    label: 'BTC/USDT',
-                    data: [],
-                    borderColor: '#f59e0b',
-                    backgroundColor: 'rgba(245, 158, 11, 0.05)',
-                    borderWidth: 2,
-                    pointRadius: 1, // Маленькие точки для наглядности
-                    fill: true,
-                    tension: 0.2 // Мягкое сглаживание углов линии
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: { duration: 200 }, // Быстрая анимация перерисовки
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: {
-                        grid: { display: false },
-                        ticks: { color: '#64748b', maxTicksLimit: 8 } // Показываем только часть меток, чтоб не спамить
-                    },
-                    y: {
-                        grid: { color: '#334155' },
-                        ticks: { color: '#94a3b8' }
-                    }
-                }
-            }
-        });
+</div>
 
-        // Создаем WebSocket соединение
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+<script>
+// ── CHART SETUP ──
+const ctx = document.getElementById('chart').getContext('2d');
+const chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [{
+            label: 'BTC',
+            data: [],
+            borderColor: '#ffb800',
+            backgroundColor: 'rgba(255,184,0,0.04)',
+            borderWidth: 1.5,
+            pointRadius: 0,
+            fill: true,
+            tension: 0.3
+        }]
+    },
+    options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 150 },
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: false }, tooltip: {
+            backgroundColor: '#0d1117',
+            borderColor: '#1c2a3a',
+            borderWidth: 1,
+            titleColor: '#4a6080',
+            bodyColor: '#c8d8e8',
+            callbacks: { label: ctx => `$${ctx.raw.toLocaleString()}` }
+        }},
+        scales: {
+            x: { grid: { display: false }, ticks: { color: '#4a6080', maxTicksLimit: 6 } },
+            y: { grid: { color: 'rgba(28,42,58,0.6)' }, ticks: { color: '#4a6080', callback: v => '$'+v.toLocaleString() } }
+        }
+    }
+});
 
-        ws.onopen = () => {
-            const statusEl = document.getElementById('status');
-            statusEl.innerText = '🟢 В сети';
-            statusEl.className = "bg-emerald-950 text-emerald-400 px-4 py-2 rounded-lg text-sm font-medium border border-emerald-800";
-        };
+// ── WS ──
+const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(`${protocol}//${location.host}/ws`);
 
-        ws.onclose = () => {
-            const statusEl = document.getElementById('status');
-            statusEl.innerText = '🔴 Офлайн';
-            statusEl.className = "bg-rose-950 text-rose-400 px-4 py-2 rounded-lg text-sm font-medium border border-rose-800";
-        };
+const badge = document.getElementById('conn-badge');
+ws.onopen  = () => { badge.textContent = '● ONLINE'; badge.className = 'badge online'; };
+ws.onclose = () => { badge.textContent = '● OFFLINE'; badge.className = 'badge offline'; };
 
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+ws.onmessage = ({ data }) => {
+    const d = JSON.parse(data);
 
-            // 1. Текстовые индикаторы
-            document.getElementById('btc-price').innerText = `$${data.price.toLocaleString()}`;
-            document.getElementById('balance').innerText = `$${data.balance}`;
-            document.getElementById('trades').innerText = data.total_trades;
-            document.getElementById('bot-status').innerText = data.status;
+    // ── STATS ──
+    document.getElementById('s-price').textContent = '$' + d.price.toLocaleString();
+    document.getElementById('s-balance').textContent = '$' + d.balance.toFixed(2);
 
-            const pnl = document.getElementById('pnl');
-            pnl.innerText = `${data.total_pnl >= 0 ? '+' : ''}$${data.total_pnl.toFixed(2)}`;
-            pnl.className = `text-xl font-bold ${data.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-500'}`;
+    const pnlEl = document.getElementById('s-pnl');
+    pnlEl.textContent = (d.total_pnl >= 0 ? '+' : '') + '$' + d.total_pnl.toFixed(3);
+    pnlEl.style.color = d.total_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('pnl-card').style.borderTopColor = d.total_pnl >= 0 ? 'var(--green)' : 'var(--red)';
 
-            // 2. Блок состояния сетки/позиции
-            const posBox = document.getElementById('position-box');
-            if (data.position) {
-                posBox.innerHTML = `
-                    <div class="space-y-1">
-                        <div class="flex justify-between"><span>Режим:</span> <span class="text-indigo-400 font-bold">${data.position.entry_price}</span></div>
-                        <div class="flex justify-between"><span>Активных лимиток:</span> <span class="text-amber-400 font-bold">${data.position.qty} шт.</span></div>
-                        <div class="flex justify-between"><span>Тип ТР:</span> <span class="text-emerald-400">${data.position.tp_price}</span></div>
-                        <div class="flex justify-between"><span>Риск (SL):</span> <span class="text-rose-400">${data.position.sl_price}</span></div>
-                    </div>
-                `;
-            }
+    document.getElementById('s-trades').textContent = d.total_trades + ' / ' + d.winrate + '%';
+    document.getElementById('s-winrate').textContent = 'W:' + d.wins + ' / L:' + d.losses;
 
-            // 3. ПОЧИНКА ГРАФИКА: Пушим реальное текущее время компьютера
-            const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const rsiEl = document.getElementById('s-rsi');
+    rsiEl.textContent = d.rsi;
+    rsiEl.style.color = d.rsi > 65 ? 'var(--red)' : d.rsi < 35 ? 'var(--green)' : 'var(--text)';
+    document.getElementById('s-rsi-hint').textContent =
+        d.rsi > 70 ? '⚠ перекуплен' : d.rsi < 30 ? '⚠ перепродан' :
+        d.rsi > 60 ? 'бычья зона' : d.rsi < 40 ? 'медвежья зона' : 'нейтральный';
 
-            priceChart.data.labels.push(currentTime);
-            priceChart.data.datasets[0].data.push(data.price);
+    // ── INDICATORS ──
+    document.getElementById('i-ema9').textContent  = d.ema_fast.toLocaleString();
+    document.getElementById('i-ema21').textContent = d.ema_slow.toLocaleString();
+    const isTrending = d.ema_fast > d.ema_slow;
+    const trendEl = document.getElementById('i-trend');
+    trendEl.textContent = isTrending ? '↑ Бычий' : '↓ Медвежий';
+    trendEl.style.color = isTrending ? 'var(--green)' : 'var(--red)';
 
-            // Удерживаем на графике последние 25 точек, чтобы он плавно сдвигался влево
-            if (priceChart.data.labels.length > 25) {
-                priceChart.data.labels.shift();
-                priceChart.data.datasets[0].data.shift();
-            }
+    // ── WIN BAR ──
+    document.getElementById('wins-label').textContent   = 'Выигрыши: ' + d.wins;
+    document.getElementById('losses-label').textContent = 'Проигрыши: ' + d.losses;
+    const pct = d.total_trades > 0 ? (d.wins / d.total_trades * 100) : 0;
+    document.getElementById('winbar-fill').style.width = pct + '%';
 
-            // Принудительно заставляем Chart.js обновить холст
-            priceChart.update('none');
+    // ── POSITION ──
+    const posBox    = document.getElementById('pos-box');
+    const noPos     = document.getElementById('no-pos');
+    const posContent = document.getElementById('pos-content');
+    if (d.position) {
+        const p = d.position;
+        const isLong = p.side === 'LONG';
+        const pnlClass = p.unrealized_pnl >= 0 ? 'val-green' : 'val-red';
+        noPos.style.display = 'none';
+        posContent.style.display = 'block';
+        posContent.innerHTML = `
+            <div class="pos-row"><span>Тип:</span><span class="${isLong ? 'val-long' : 'val-short'}">${p.side}</span></div>
+            <div class="pos-row"><span>Вход:</span><span>$${p.entry_price.toLocaleString()}</span></div>
+            <div class="pos-row"><span>Объём:</span><span>${p.qty_btc} BTC</span></div>
+            <div class="pos-row"><span>Тейк-профит:</span><span class="val-green">$${p.tp_price}</span></div>
+            <div class="pos-row"><span>Стоп-лосс:</span><span class="val-red">$${p.sl_price}</span></div>
+            <div class="pos-row" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
+                <span>Нереализован:</span>
+                <span class="${pnlClass}" style="font-weight:700">${p.unrealized_pnl >= 0 ? '+' : ''}${p.unrealized_pnl}$ (${p.pnl_pct >= 0 ? '+' : ''}${p.pnl_pct}%)</span>
+            </div>
+        `;
+    } else {
+        noPos.style.display = 'flex';
+        posContent.style.display = 'none';
+    }
 
-            // 4. Рендеринг таблицы истории сделок
-            const tableBody = document.getElementById('history-table');
-            if (data.history && data.history.length > 0) {
-                tableBody.innerHTML = data.history.map(r => {
-                    const isProfit = r.res.includes('PROFIT');
-                    return `
-                        <tr class="border-b border-slate-800 hover:bg-slate-800/40">
-                            <td class="p-2 text-slate-400 font-mono text-2xs">${r.time}</td>
-                            <td class="p-2">$${r.entry}</td>
-                            <td class="p-2">$${r.exit}</td>
-                            <td class="p-2 font-bold ${isProfit ? 'text-emerald-400' : 'text-rose-500'}">${isProfit ? '+' : ''}${r.pnl}$</td>
-                            <td class="p-2">
-                                <span class="px-1.5 py-0.5 text-2xs rounded ${isProfit ? 'bg-emerald-950/80 text-emerald-400' : 'bg-rose-950/80 text-rose-400'}">
-                                    ${r.res}
-                                </span>
-                            </td>
-                        </tr>
-                    `;
-                }).join('');
-            } else {
-                tableBody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500">История пуста. Ждем пробоя сетки...</td></tr>`;
-            }
-        };
-    </script>
+    // ── STATUS LOG ──
+    document.getElementById('status-log').textContent = d.status;
+
+    // ── CHART ──
+    const now = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    chart.data.labels.push(now);
+    chart.data.datasets[0].data.push(d.price);
+    if (chart.data.labels.length > 60) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+    }
+    chart.update('none');
+
+    // ── HISTORY ──
+    const tbody = document.getElementById('history-body');
+    if (d.history && d.history.length > 0) {
+        tbody.innerHTML = d.history.map(r => {
+            const isTP   = r.result === 'TAKE_PROFIT';
+            const isLong = r.side === 'LONG';
+            // Gross PnL не хранится в payload — покажем по net + fee
+            const gross = (r.net_pnl + r.fee).toFixed(3);
+            return `
+                <tr>
+                    <td>${r.open_time}</td>
+                    <td>${r.close_time}</td>
+                    <td class="${isLong ? 'side-long' : 'side-short'}">${r.side}</td>
+                    <td>$${Number(r.entry).toLocaleString()}</td>
+                    <td>$${Number(r.exit).toLocaleString()}</td>
+                    <td class="${parseFloat(gross) >= 0 ? 'pnl-pos' : 'pnl-neg'}">${parseFloat(gross) >= 0 ? '+' : ''}${gross}$</td>
+                    <td style="color:var(--muted)">-${r.fee}$</td>
+                    <td class="${r.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}" style="font-weight:700">
+                        ${r.net_pnl >= 0 ? '+' : ''}${r.net_pnl}$
+                    </td>
+                    <td><span class="pill ${isTP ? 'tp' : 'sl'}">${isTP ? '✓ TP' : '✗ SL'}</span></td>
+                </tr>
+            `;
+        }).join('');
+    } else {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="9">Ждём первую сделку по сигналу EMA...</td></tr>';
+    }
+};
+</script>
 </body>
 </html>
