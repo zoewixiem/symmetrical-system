@@ -20,9 +20,9 @@ PRICE_HISTORY: deque = deque(maxlen=100)   # последние 100 тиков
 LATEST_PRICE: float = 0.0
 
 # ==================== КОНСТАНТЫ СТРАТЕГИИ ====================
-INITIAL_BALANCE = 300.0
+INITIAL_BALANCE = 50.0
 LEVERAGE       = 10
-QTY_USDT       = 30.0          # 30 USDT маржи на сделку
+QTY_USDT       = 15.0          # 15 USDT маржи на сделку
 TAKER_FEE      = 0.00055       # 0.055% — реальная комиссия Bybit тейкер
 TP_PCT         = 0.0025        # +0.25% тейк-профит
 SL_PCT         = 0.0012        # -0.12% стоп-лосс
@@ -106,7 +106,7 @@ def get_signal(prices: list) -> str | None:
     crossed_down = ema_fast_prev >= ema_slow_prev and ema_fast_now < ema_slow_now
 
     if crossed_up   and rsi < RSI_OVERBOUGHT:
-        return ""
+        return "LONG"  # <--- Впиши сюда "LONG"
     if crossed_down and rsi > RSI_OVERSOLD:
         return "SHORT"
     return None
@@ -213,7 +213,7 @@ async def trading_loop():
             _, side, entry_price, qty_btc, tp_price, sl_price, margin, fee_entry, open_time = pos
 
             # Нереализованный PnL
-           if side == "LONG":
+            if side == "LONG":  # <--- Ошибка была здесь. Выровняй отступ!
                 raw_pnl = (current_price - entry_price) * qty_btc
                 is_tp   = current_price >= tp_price
                 is_sl   = current_price <= sl_price
@@ -280,7 +280,7 @@ async def trading_loop():
         history = []
         for r in c.execute(
             "SELECT open_time, close_time, side, entry_price, exit_price, "
-            "net_pnl, fee_total, result FROM trade_history ORDER BY id DESC LIMIT 8"
+            "net_pnl, fee_total, result FROM trade_history ORDER BY id DESC LIMIT "
         ).fetchall():
             history.append({
                 "open_time":   r[0],
