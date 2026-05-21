@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Crypto Bot Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 p-6">
+    <div class="max-w-6xl mx-auto">
+        <header class="flex justify-between items-center mb-8 border-b border-slate-800 pb-4">
+            <div>
+                <h1 class="text-2xl font-bold text-indigo-400">📊 CryptoBot Dashboard</h1>
+                <p class="text-sm text-slate-400">Память и аналитика в реальном времени</p>
+            </div>
+            <div class="bg-slate-800 px-4 py-2 rounded-lg text-sm font-medium" id="status">Подключение...</div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700"><div class="text-xs text-slate-400">Цена BTC</div><div class="text-xl font-bold text-amber-400" id="btc-price">$0.00</div></div>
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700"><div class="text-xs text-slate-400">Баланс</div><div class="text-xl font-bold text-indigo-300" id="balance">$17.00</div></div>
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700"><div class="text-xs text-slate-400">Чистый PnL</div><div class="text-xl font-bold" id="pnl">$0.00</div></div>
+            <div class="bg-slate-800 p-4 rounded-xl border border-slate-700"><div class="text-xs text-slate-400">Всего сделок</div><div class="text-xl font-bold text-emerald-400" id="trades">0</div></div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <div class="lg:col-span-2 bg-slate-800 p-5 rounded-xl border border-slate-700 h-72 flex flex-col">
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">📈 Живой график цены BTC (Каждую секунду)</h3>
+                <div class="relative flex-grow min-h-0">
+                    <canvas id="priceChart"></canvas>
+                </div>
+            </div>
+            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 flex flex-col justify-between">
+                <div>
+                    <h3 class="text-sm font-bold text-slate-300 mb-2">🛡 Состояние матрицы</h3>
+                    <div id="position-box" class="bg-slate-900 p-4 rounded-lg text-xs font-mono text-slate-300 leading-relaxed">Нет активных позиций</div>
+                </div>
+                <div class="text-xs text-slate-400 mt-4 border-t border-slate-700/50 pt-2">
+                    Лог системы: <br><span id="bot-status" class="font-mono text-indigo-300">Ожидание тика...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+            <h3 class="text-sm font-bold text-slate-300 mb-3">⏳ Последние 5 сделок</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-slate-900 text-slate-400 uppercase text-2xs"><th class="p-2">Время</th><th class="p-2">Вход</th><th class="p-2">Выход</th><th class="p-2">PnL</th><th class="p-2">Результат</th></thead>
+                    <tbody id="history-table"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('priceChart').getContext('2d');
+
+        // Настраиваем адаптивный и плавный график
+        const priceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [], // Тут будут реальные секунды времени
+                datasets: [{
+                    label: 'BTC/USDT',
+                    data: [],
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245, 158, 11, 0.05)',
+                    borderWidth: 2,
+                    pointRadius: 1, // Маленькие точки для наглядности
+                    fill: true,
+                    tension: 0.2 // Мягкое сглаживание углов линии
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 200 }, // Быстрая анимация перерисовки
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#64748b', maxTicksLimit: 8 } // Показываем только часть меток, чтоб не спамить
+                    },
+                    y: {
+                        grid: { color: '#334155' },
+                        ticks: { color: '#94a3b8' }
+                    }
+                }
+            }
+        });
+
+        // Создаем WebSocket соединение
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+		const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+        ws.onopen = () => {
+            const statusEl = document.getElementById('status');
+            statusEl.innerText = '🟢 В сети';
+            statusEl.className = "bg-emerald-950 text-emerald-400 px-4 py-2 rounded-lg text-sm font-medium border border-emerald-800";
+        };
+
+        ws.onclose = () => {
+            const statusEl = document.getElementById('status');
+            statusEl.innerText = '🔴 Офлайн';
+            statusEl.className = "bg-rose-950 text-rose-400 px-4 py-2 rounded-lg text-sm font-medium border border-rose-800";
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            // 1. Текстовые индикаторы
+            document.getElementById('btc-price').innerText = `$${data.price.toLocaleString()}`;
+            document.getElementById('balance').innerText = `$${data.balance}`;
+            document.getElementById('trades').innerText = data.total_trades;
+            document.getElementById('bot-status').innerText = data.status;
+
+            const pnl = document.getElementById('pnl');
+            pnl.innerText = `${data.total_pnl >= 0 ? '+' : ''}$${data.total_pnl.toFixed(2)}`;
+            pnl.className = `text-xl font-bold ${data.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-500'}`;
+
+            // 2. Блок состояния сетки/позиции
+            const posBox = document.getElementById('position-box');
+            if (data.position) {
+                posBox.innerHTML = `
+                    <div class="space-y-1">
+                        <div class="flex justify-between"><span>Режим:</span> <span class="text-indigo-400 font-bold">${data.position.entry_price}</span></div>
+                        <div class="flex justify-between"><span>Активных лимиток:</span> <span class="text-amber-400 font-bold">${data.position.qty} шт.</span></div>
+                        <div class="flex justify-between"><span>Тип ТР:</span> <span class="text-emerald-400">${data.position.tp_price}</span></div>
+                        <div class="flex justify-between"><span>Риск (SL):</span> <span class="text-rose-400">${data.position.sl_price}</span></div>
+                    </div>
+                `;
+            }
+
+            // 3. ПОЧИНКА ГРАФИКА: Пушим реальное текущее время компьютера
+            const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            priceChart.data.labels.push(currentTime);
+            priceChart.data.datasets[0].data.push(data.price);
+
+            // Удерживаем на графике последние 25 точек, чтобы он плавно сдвигался влево
+            if (priceChart.data.labels.length > 25) {
+                priceChart.data.labels.shift();
+                priceChart.data.datasets[0].data.shift();
+            }
+
+            // Принудительно заставляем Chart.js обновить холст
+            priceChart.update('none');
+
+            // 4. Рендеринг таблицы истории сделок
+            const tableBody = document.getElementById('history-table');
+            if (data.history && data.history.length > 0) {
+                tableBody.innerHTML = data.history.map(r => {
+                    const isProfit = r.res.includes('PROFIT');
+                    return `
+                        <tr class="border-b border-slate-800 hover:bg-slate-800/40">
+                            <td class="p-2 text-slate-400 font-mono text-2xs">${r.time}</td>
+                            <td class="p-2">$${r.entry}</td>
+                            <td class="p-2">$${r.exit}</td>
+                            <td class="p-2 font-bold ${isProfit ? 'text-emerald-400' : 'text-rose-500'}">${isProfit ? '+' : ''}${r.pnl}$</td>
+                            <td class="p-2">
+                                <span class="px-1.5 py-0.5 text-2xs rounded ${isProfit ? 'bg-emerald-950/80 text-emerald-400' : 'bg-rose-950/80 text-rose-400'}">
+                                    ${r.res}
+                                </span>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                tableBody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500">История пуста. Ждем пробоя сетки...</td></tr>`;
+            }
+        };
+    </script>
+</body>
+</html>
