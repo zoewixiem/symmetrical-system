@@ -90,7 +90,7 @@ def calc_rsi(prices: list, period: int = 14) -> float:
 def get_signal(prices: list) -> str | None:
     """
     Сигнал: EMA9 пересекает EMA21 + RSI фильтр
-    LONG:  EMA9 > EMA21 (пересечение снизу вверх) + RSI < 65
+    :  EMA9 > EMA21 (пересечение снизу вверх) + RSI < 65
     SHORT: EMA9 < EMA21 (пересечение сверху вниз) + RSI > 35
     """
     if len(prices) < EMA_SLOW + 2:
@@ -106,7 +106,7 @@ def get_signal(prices: list) -> str | None:
     crossed_down = ema_fast_prev >= ema_slow_prev and ema_fast_now < ema_slow_now
 
     if crossed_up   and rsi < RSI_OVERBOUGHT:
-        return "LONG"
+        return ""
     if crossed_down and rsi > RSI_OVERSOLD:
         return "SHORT"
     return None
@@ -213,12 +213,12 @@ async def trading_loop():
             _, side, entry_price, qty_btc, tp_price, sl_price, margin, fee_entry, open_time = pos
 
             # Нереализованный PnL
-            if side == "LONG":
-                raw_pnl = (current_price - entry_price) * qty_btc * LEVERAGE
+           if side == "LONG":
+                raw_pnl = (current_price - entry_price) * qty_btc
                 is_tp   = current_price >= tp_price
                 is_sl   = current_price <= sl_price
             else:
-                raw_pnl = (entry_price - current_price) * qty_btc * LEVERAGE
+                raw_pnl = (entry_price - current_price) * qty_btc
                 is_tp   = current_price <= tp_price
                 is_sl   = current_price >= sl_price
 
