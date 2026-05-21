@@ -2,7 +2,6 @@ import asyncio
 import sqlite3
 import json
 import os
-import threading
 from collections import deque
 from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -14,8 +13,7 @@ app = FastAPI(title="EMA/RSI Demo Bot")
 DATA_DIR = "/data" if os.path.exists("/data") else "."
 DB_NAME = os.path.join(DATA_DIR, "demo_bot.db")
 
-# ==================== THREAD-SAFE PRICE STORAGE ====================
-_price_lock = threading.Lock()
+# ==================== PRICE STORAGE ====================
 PRICE_HISTORY: deque = deque(maxlen=100)   # последние 100 тиков
 LATEST_PRICE: float = 0.0
 
@@ -26,8 +24,6 @@ QTY_USDT       = 15.0          # 15 USDT маржи на сделку
 TAKER_FEE      = 0.00055       # 0.055% — реальная комиссия Bybit тейкер
 TP_PCT         = 0.0025        # +0.25% тейк-профит
 SL_PCT         = 0.0012        # -0.12% стоп-лосс
-# Математика: winrate нужен > SL/(TP+SL) = 0.12/0.37 = 32.4%
-# EMA crossover даёт ~42-48% — есть edge
 
 EMA_FAST = 9
 EMA_SLOW = 21
@@ -66,7 +62,6 @@ init_db()
 
 # ==================== ИНДИКАТОРЫ ====================
 def calc_ema(prices: list, period: int) -> float:
-    """Exponential Moving Average"""
     if len(prices) < period:
         return sum(prices) / len(prices)
     k = 2.0 / (period + 1)
@@ -76,7 +71,6 @@ def calc_ema(prices: list, period: int) -> float:
     return ema
 
 def calc_rsi(prices: list, period: int = 14) -> float:
-    """Relative Strength Index"""
     if len(prices) < period + 1:
         return 50.0
     deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
@@ -88,11 +82,6 @@ def calc_rsi(prices: list, period: int = 14) -> float:
     return 100 - (100 / (1 + rs))
 
 def get_signal(prices: list) -> str | None:
-    """
-    Сигнал: EMA9 пересекает EMA21 + RSI фильтр
-    :  EMA9 > EMA21 (пересечение снизу вверх) + RSI < 65
-    SHORT: EMA9 < EMA21 (пересечение сверху вниз) + RSI > 35
-    """
     if len(prices) < EMA_SLOW + 2:
         return None
 
@@ -106,7 +95,7 @@ def get_signal(prices: list) -> str | None:
     crossed_down = ema_fast_prev >= ema_slow_prev and ema_fast_now < ema_slow_now
 
     if crossed_up   and rsi < RSI_OVERBOUGHT:
-        return "LONG"  # <--- Впиши сюда "LONG"
+        return "LONG"
     if crossed_down and rsi > RSI_OVERSOLD:
         return "SHORT"
     return None
@@ -133,9 +122,8 @@ def _on_ticker(message):
     global LATEST_PRICE
     try:
         price = float(message["data"]["lastPrice"])
-        with _price_lock:
-            LATEST_PRICE = price
-            PRICE_HISTORY.append(price)
+        LATEST_PRICE = price
+        PRICE_HISTORY.append(price)
     except Exception:
         pass
 
@@ -150,17 +138,15 @@ except Exception as e:
 async def trading_loop():
     print("⏳ Накопление данных для EMA/RSI...")
     while True:
-        with _price_lock:
-            count = len(PRICE_HISTORY)
+        count = len(PRICE_HISTORY)
         if count >= EMA_SLOW + 5:
             break
         await asyncio.sleep(0.5)
     print("🚀 Стратегия EMA/RSI активна (DEMO TESTNET)")
 
     while True:
-        with _price_lock:
-            current_price = LATEST_PRICE
-            prices_snapshot = list(PRICE_HISTORY)
+        current_price = LATEST_PRICE
+        prices_snapshot = list(PRICE_HISTORY)
 
         if current_price == 0.0:
             await asyncio.sleep(0.5)
@@ -178,14 +164,11 @@ async def trading_loop():
         signal   = get_signal(prices_snapshot)
 
         trend = "↑ Бычий" if ema_fast > ema_slow else "↓ Медвежий"
-        status_msg = (
-            f"EMA9={ema_fast:.1f} | EMA21={ema_slow:.1f} | RSI={rsi:.1f} | {trend}"
-        )
+        status_msg = f"EMA9={ema_fast:.1f} | EMA21={ema_slow:.1f} | RSI={rsi:.1f} | {trend}"
         pos_payload = None
 
         # --- ОТКРЫТИЕ ПОЗИЦИИ ---
         if pos is None and signal is not None:
-            # qty в BTC с учётом плеча
             qty_btc = round((QTY_USDT * LEVERAGE) / current_price, 6)
             margin  = QTY_USDT
             fee_entry = current_price * qty_btc * TAKER_FEE
@@ -201,8 +184,7 @@ async def trading_loop():
                 balance -= (margin + fee_entry)
                 c.execute(
                     "INSERT INTO active_position VALUES (1,?,?,?,?,?,?,?,?)",
-                    (signal, current_price, qty_btc, tp, sl, margin, fee_entry,
-                     datetime.now().strftime("%H:%M:%S"))
+                    (signal, current_price, qty_btc, tp, sl, margin, fee_entry, datetime.now().strftime("%H:%M:%S"))
                 )
                 c.execute("UPDATE stats SET balance=? WHERE id=1", (balance,))
                 conn.commit()
@@ -212,8 +194,7 @@ async def trading_loop():
         elif pos is not None:
             _, side, entry_price, qty_btc, tp_price, sl_price, margin, fee_entry, open_time = pos
 
-            # Нереализованный PnL
-            if side == "LONG":  # <--- Ошибка была здесь. Выровняй отступ!
+            if side == "LONG":
                 raw_pnl = (current_price - entry_price) * qty_btc
                 is_tp   = current_price >= tp_price
                 is_sl   = current_price <= sl_price
@@ -226,18 +207,11 @@ async def trading_loop():
             unrealized   = raw_pnl - fee_entry - fee_exit
             pnl_pct      = unrealized / margin * 100
 
-            status_msg = (
-                f"{'🟢' if unrealized >= 0 else '🔴'} {side} открыт. "
-                f"Вход: ${entry_price:,.2f} | PnL: {unrealized:+.3f}$ ({pnl_pct:+.1f}%)"
-            )
+            status_msg = f"{'🟢' if unrealized >= 0 else '🔴'} {side} открыт. Вход: ${entry_price:,.2f} | PnL: {unrealized:+.3f}$ ({pnl_pct:+.1f}%)"
             pos_payload = {
-                "side": side,
-                "entry_price": entry_price,
-                "qty_btc": round(qty_btc, 6),
-                "tp_price": tp_price,
-                "sl_price": sl_price,
-                "unrealized_pnl": round(unrealized, 3),
-                "pnl_pct": round(pnl_pct, 2),
+                "side": side, "entry_price": entry_price, "qty_btc": round(qty_btc, 6),
+                "tp_price": tp_price, "sl_price": sl_price,
+                "unrealized_pnl": round(unrealized, 3), "pnl_pct": round(pnl_pct, 2),
             }
 
             # --- ЗАКРЫТИЕ ---
@@ -260,78 +234,49 @@ async def trading_loop():
                     (balance, total_pnl, total_trades, wins, losses)
                 )
                 c.execute(
-                    "INSERT INTO trade_history "
-                    "(open_time,close_time,side,entry_price,exit_price,gross_pnl,fee_total,net_pnl,result,balance_after) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (open_time, close_time, side, entry_price, current_price,
-                     round(gross_pnl, 4), round(fee_total, 4), round(net_pnl, 4),
-                     result, round(balance, 4))
+                    "INSERT INTO trade_history (open_time,close_time,side,entry_price,exit_price,gross_pnl,fee_total,net_pnl,result,balance_after) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (open_time, close_time, side, entry_price, current_price, round(gross_pnl, 4), round(fee_total, 4), round(net_pnl, 4), result, round(balance, 4))
                 )
                 conn.commit()
                 icon = "💰" if is_tp else "📉"
-                status_msg = (
-                    f"{icon} {side} закрыт ({result}). "
-                    f"Вход: ${entry_price} → Выход: ${current_price} | "
-                    f"NET PnL: {net_pnl:+.3f}$ (комиссии: {fee_total:.3f}$)"
-                )
+                status_msg = f"{icon} {side} закрыт ({result}). Вход: ${entry_price} → Выход: ${current_price} | NET PnL: {net_pnl:+.3f}$ (комиссии: {fee_total:.3f}$)"
                 pos_payload = None
 
         # --- ИСТОРИЯ ---
         history = []
-        for r in c.execute(
-            "SELECT open_time, close_time, side, entry_price, exit_price, "
-            "net_pnl, fee_total, result FROM trade_history ORDER BY id DESC LIMIT "
-        ).fetchall():
+        for r in c.execute("SELECT open_time, close_time, side, entry_price, exit_price, net_pnl, fee_total, result FROM trade_history ORDER BY id DESC LIMIT 8").fetchall():
             history.append({
-                "open_time":   r[0],
-                "close_time":  r[1],
-                "side":        r[2],
-                "entry":       r[3],
-                "exit":        r[4],
-                "net_pnl":     round(r[5], 3),
-                "fee":         round(r[6], 4),
-                "result":      r[7],
+                "open_time":   r[0], "close_time":  r[1], "side":        r[2],
+                "entry":       r[3], "exit":        r[4], "net_pnl":     round(r[5], 3),
+                "fee":         round(r[6], 4), "result":      r[7],
             })
         conn.close()
 
         winrate = round(wins / total_trades * 100, 1) if total_trades > 0 else 0.0
 
         payload = {
-            "price":        current_price,
-            "balance":      round(balance, 2),
-            "total_pnl":    round(total_pnl, 3),
-            "total_trades": total_trades,
-            "wins":         wins,
-            "losses":       losses,
-            "winrate":      winrate,
-            "ema_fast":     round(ema_fast, 2),
-            "ema_slow":     round(ema_slow, 2),
-            "rsi":          round(rsi, 1),
-            "status":       status_msg,
-            "position":     pos_payload,
-            "history":      history,
+            "price": current_price, "balance": round(balance, 2), "total_pnl": round(total_pnl, 3),
+            "total_trades": total_trades, "wins": wins, "losses": losses, "winrate": winrate,
+            "ema_fast": round(ema_fast, 2), "ema_slow": round(ema_slow, 2), "rsi": round(rsi, 1),
+            "status": status_msg, "position": pos_payload, "history": history,
         }
         await manager.broadcast(json.dumps(payload))
         await asyncio.sleep(0.5)
 
 # ==================== FASTAPI ROUTES ====================
 @app.on_event("startup")
-async def startup():
-    asyncio.create_task(trading_loop())
+async def startup(): asyncio.create_task(trading_loop())
 
 @app.get("/")
 async def dashboard():
     path = "index.html"
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return HTMLResponse(f.read())
+        with open(path, "r", encoding="utf-8") as f: return HTMLResponse(f.read())
     return HTMLResponse("<h3>index.html не найден</h3>", 404)
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        while True: await websocket.receive_text()
+    except WebSocketDisconnect: manager.disconnect(websocket)
